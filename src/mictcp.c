@@ -1,18 +1,30 @@
 #include <mictcp.h>
 #include <api/mictcp_core.h>
 
+struct mic_tcp_sock_addr addr_cl;
+struct mic_tcp_sock_addr addr_dest;
+struct mic_tcp_sock sock;
+struct mic_tcp_pdu PDU;
+struct mic_tcp_payload charge_utile;
+struct mic_tcp_header header;
+
+
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
  * Retourne le descripteur du socket ou bien -1 en cas d'erreur
  */
 int mic_tcp_socket(start_mode sm)
 {
-   int result = -1;
-   printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-   result = initialize_components(sm); /* Appel obligatoire */
-   set_loss_rate(0);
+    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+    if(initialize_components(sm)==-1){
+        printf("erreur intialize_components\n");
+        return -1;
+    }; /* Appel obligatoire */
+    sock.fd=rand();
+    sock.state=IDLE;
+    set_loss_rate(1);
 
-   return result;
+    return sock.fd;
 }
 
 /*
@@ -22,17 +34,19 @@ int mic_tcp_socket(start_mode sm)
 int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
 {
    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-   return -1;
+   return 0;
 }
 
 /*
  * Met le socket en état d'acceptation de connexions
  * Retourne 0 si succès, -1 si erreur
  */
-int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
+int mic_tcp_accept(int socket, mic_tcp_sock_addr *dest)
 {
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-    return -1;
+    
+    sock.state=ESTABLISHED;
+    return 0;
 }
 
 /*
@@ -42,7 +56,8 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr* addr)
 int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
 {
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-    return -1;
+    sock.state=ESTABLISHED;
+    return 0;
 }
 
 /*
@@ -52,7 +67,20 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
 int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
 {
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
-    return -1;
+    struct mic_tcp_header header;
+    memset(&header,sizeof(struct mic_tcp_header),0);
+    header.dest_port = addr_dest.port;
+    header.source_port = addr_cl.port;
+    charge_utile.data=mesg;
+    charge_utile.size=mesg_size;
+    PDU.header=header;
+    PDU.payload=charge_utile;
+
+    if(IP_send(PDU, addr_dest)==-1){
+        printf("erreur IP_send\n");
+        return -1;
+    }
+    return sizeof(PDU);
 }
 
 /*
@@ -61,10 +89,14 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size)
  * Retourne le nombre d’octets lu ou bien -1 en cas d’erreur
  * NB : cette fonction fait appel à la fonction app_buffer_get()
  */
-int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
-{
+int mic_tcp_recv (int socket, char* mesg, int max_mesg_size){
+    mic_tcp_payload p;
+    p.data=mesg;
+    p.size=max_mesg_size;
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
-    return -1;
+    int Pl_Size = app_buffer_get(p);
+
+    return Pl_Size;
 }
 
 /*
@@ -75,7 +107,8 @@ int mic_tcp_recv (int socket, char* mesg, int max_mesg_size)
 int mic_tcp_close (int socket)
 {
     printf("[MIC-TCP] Appel de la fonction :  "); printf(__FUNCTION__); printf("\n");
-    return -1;
+    sock.state=CLOSED;
+    return 0;
 }
 
 /*
@@ -86,5 +119,11 @@ int mic_tcp_close (int socket)
  */
 void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
 {
+    if(pdu.header.fin==1){
+        exit(0);
+    }
+    else{
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
+    app_buffer_put(pdu.payload);
+    }
 }
