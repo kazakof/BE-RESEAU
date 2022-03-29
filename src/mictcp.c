@@ -2,15 +2,15 @@
 #include <api/mictcp_core.h>
 
 #define MAX_SOCKET 256
-
+//#define TAILLE_FENETRE 60
 
 
 static struct mic_tcp_sock socket_local[MAX_SOCKET];
 static struct mic_tcp_sock_addr addr_distant;
 static int socket_nb = 0;
-static int loss_percentage_accept=1;
-static int nb_packets_sent=0;
-static int lost_packets=0;
+static float loss_percentage_accept=2.0;
+static int nb_images_sent=0;
+static int lost_images=0;
 static float lost_rate=0.0;
 int PE=0;
 int PA=0;
@@ -31,7 +31,7 @@ int mic_tcp_socket(start_mode sm)
     socket_local[socket_nb].fd=socket_nb;
     socket_local[socket_nb].state=IDLE;
     socket_nb++;
-    set_loss_rate(1);
+    set_loss_rate(12);
 
     return socket_nb-1;
 }
@@ -144,23 +144,31 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
 
     int sent_size = IP_send(pdu_emis, addr_distant);
     IP_send(pdu_emis, addr_distant);//envoi du message
-    nb_packets_sent++;
+    nb_images_sent++;
 
     IP_recv(&pdu_recu, &addr_recu, timeout); //on recupere l'acquittement
-    
 
-    while(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){ //boucle wait et renvoi du message si pas bon numéo
-        lost_packets++;
-        lost_rate=((float)lost_packets/(float)nb_packets_sent)*100.0;
+    if(nb_images_sent%60==0){
+            lost_rate=((float)lost_images/(float)nb_images_sent)*100.0;
+            lost_images=0;
+            nb_images_sent=0; 
+    }
+
+    if(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){
+        lost_images++;
+    }
+
+    while(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){ //boucle wait et renvoi du message si pas bon numéro
         if(lost_rate<loss_percentage_accept){
+            PE--;
             return 0;
         }else{
         IP_send(pdu_emis, addr_distant);
-        nb_packets_sent++;
         IP_recv(&pdu_recu, &addr_recu, timeout);
         }
         
-    }      
+    }
+
 
     return sent_size; //retourne la taille des données envoyées
 }
