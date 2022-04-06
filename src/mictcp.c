@@ -2,15 +2,15 @@
 #include <api/mictcp_core.h>
 
 #define MAX_SOCKET 256
-//#define TAILLE_FENETRE 60
+#define TAILLE_FENETRE 60
 
 
 static struct mic_tcp_sock socket_local[MAX_SOCKET];
 static struct mic_tcp_sock_addr addr_distant;
+static int loss_img[TAILLE_FENETRE]={0};
 static int socket_nb = 0;
 static float loss_percentage_accept=2.0;
 static int nb_images_sent=0;
-static int lost_images=0;
 static float lost_rate=0.0;
 int PE=0;
 int PA=0;
@@ -130,6 +130,7 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
     struct mic_tcp_sock_addr addr_recu;
 
     int timeout=100;
+    int lost_images=0;
     
 
     pdu_emis.header.source_port=socket_local[mic_sock].addr.port;
@@ -141,22 +142,30 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
 
     PE=(PE+1)%2;//acquittement cumulatif, on incrémente
 
+    if(nb_images_sent==TAILLE_FENETRE){
+        nb_images_sent=0; 
+    }
 
     int sent_size = IP_send(pdu_emis, addr_distant);
     IP_send(pdu_emis, addr_distant);//envoi du message
     nb_images_sent++;
 
+
     IP_recv(&pdu_recu, &addr_recu, timeout); //on recupere l'acquittement
 
-    if(nb_images_sent%60==0){
-            lost_rate=((float)lost_images/(float)nb_images_sent)*100.0;
-            lost_images=0;
-            nb_images_sent=0; 
+
+
+
+    if(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){ //actualisation du buffer circulaire
+        loss_img[nb_images_sent-1]=1;
+    }else{
+        loss_img[nb_images_sent-1]=0;
     }
 
-    if(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){
-        lost_images++;
+    for(int j=0;j<TAILLE_FENETRE;j++){ // calcul du nombre d'images perdues dans le buffer circulaire
+        lost_images+=loss_img[j];
     }
+    lost_rate=(float)lost_images/(float)TAILLE_FENETRE*100.0; //calcul du loss_rate
 
     while(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){ //boucle wait et renvoi du message si pas bon numéro
         if(lost_rate<loss_percentage_accept){
