@@ -1,21 +1,36 @@
 #include <mictcp.h>
 #include <api/mictcp_core.h>
+#include <stdio.h>
 
 #define MAX_SOCKET 256
 #define TAILLE_FENETRE 60
+#define LOSS_RATE 10
+#define TIMEOUT 100
+#define ID_LOSS_PERCENTAGE_SERVER 11 //id dans la table de discussion du pourcentage de pertes acceptable par le server
 
 
-static struct mic_tcp_sock socket_local[MAX_SOCKET];
+static struct mic_tcp_sock socket_local[MAX_SOCKET]; //tableau des sockets 
+static int socket_nb = 0; //nombre de sockets
 static struct mic_tcp_sock_addr addr_distant;
-static int loss_img[TAILLE_FENETRE]={0};
-static int socket_nb = 0;
-static float loss_percentage_accept=2.0;
-static int nb_images_sent=0;
-static float lost_rate=0.0;
+
+static int loss_img[TAILLE_FENETRE]={1}; //buffer circulaire pour la fenetre glissante
+static int nb_images_sent=0; //nombre d'images envoyés dans la fenetre actuelle
+
+static float tableau_discussion_pertes[21]={0.0,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0,17.0,18.0,19.0,20.0};
+static int id_loss_percentage_client=2; //id du taux de pertes voulues par le client dans table de discussion
+static int id_loss_rate_returned=ID_LOSS_PERCENTAGE_SERVER;// id du pourcentage de pertes acceptables retournées par le server
+
+static float loss_percentage_client; //pourcentage de perte effectif assigné après discussion
+static float lost_rate=0.0; //effective loss_rate
+
 int PE=0;
 int PA=0;
 
 
+void error(char * errorMsg, int line){ //fonction retour erreur
+    fprintf(stderr,"%s at line %d \n",errorMsg,line);
+    exit(EXIT_FAILURE);
+}
 
 /*
  * Permet de créer un socket entre l’application et MIC-TCP
@@ -29,9 +44,8 @@ int mic_tcp_socket(start_mode sm)
         return -1;
     }/* Appel obligatoire */
     socket_local[socket_nb].fd=socket_nb;
-    socket_local[socket_nb].state=IDLE;
     socket_nb++;
-    set_loss_rate(12);
+    set_loss_rate(LOSS_RATE);
 
     return socket_nb-1;
 }
@@ -43,7 +57,10 @@ int mic_tcp_socket(start_mode sm)
 int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
 {
    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-   //socket_local[socket].addr=addr;
+   if(socket<socket_nb-1 || socket>=socket_nb){
+       error("pb argument socket at line ",__LINE__);
+   }
+   socket_local[socket].addr=addr;
    return 0;
 }
 
@@ -53,32 +70,28 @@ int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
  */
 int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
 {
-    /*
-    struct mic_tcp_pdu syn_ack;
-    struct mic_tcp_pdu syn;
-    struct mic_tcp_pdu ack;
+    socket_local[socket].state=IDLE;
     
-    int timeout=100;*/
+    struct mic_tcp_pdu syn_ack={0};
+    //struct mic_tcp_payload percentage_returned;
     
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
 
-    /*while(socket_local[socket].state != SYN_RECEIVED){ //attente du syn
-        IP_recv(&syn,&addr_distant,timeout);
-        if(syn.header.syn==1){
-            socket_local[socket].state=SYN_RECEIVED;
-        }
-    } 
+    while(socket_local[socket].state != SYN_RECEIVED){ //attente du syn
+    }
+
     syn_ack.header.ack = 1 ;
     syn_ack.header.syn = 1;
-    
+
+    /*char id_loss=id_loss_rate_returned + 65;
+    percentage_returned.size = sizeof(id_loss);
+    percentage_returned.data=&id_loss;
+    syn_ack.payload=percentage_returned;*/
+
     IP_send(syn_ack,*addr);	//envoi du syn_ack
 
-    while (socket_local[socket].state != ESTABLISHED){ //attente du ack
-        IP_recv(&ack,&addr_distant,timeout);
-        if(ack.header.ack==1){
-            socket_local[socket].state=ESTABLISHED;
-        }
-    }*/
+    while (socket_local[socket].state != ESTABLISHED){
+    }
     return 0;
 }
 
@@ -88,31 +101,41 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
  */
 int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
 {
-    /*struct mic_tcp_pdu pdu_emis;
-    struct mic_tcp_pdu pdu_recu;
+    struct mic_tcp_pdu pdu_emis={0};
+    struct mic_tcp_pdu pdu_recu={0};
     struct mic_tcp_sock_addr addr_recu;
+    struct mic_tcp_payload loss_percentage;
 
-    pdu_emis.header.source_port=socket_local[mic_sock].addr.port;
-    pdu_emis.header.dest_port=addr_distant.port;
-    
-    int timeout=100*/
+    pdu_emis.header.syn=1;
+    pdu_emis.header.ack=0;
+ 
+    char id_loss=id_loss_percentage_client + 65; //conversion id en ASCII
+    loss_percentage.size = sizeof(id_loss);
+    loss_percentage.data = &id_loss;
+    pdu_emis.payload=loss_percentage;
+
 
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
 
-    /*pdu_emis.header.syn=1;
 
     do{
         IP_send(pdu_emis,addr);//envoi du pdu syn
-        IP_recv(&pdu_recu,&addr_recu,timeout);//attente de reception d'un syn_ack
+        IP_recv(&pdu_recu,&addr_recu,TIMEOUT);//attente de reception d'un syn_ack
       }while(!(pdu_recu.header.syn == 1 && pdu_recu.header.ack == 1));
+
+    //loss_percentage_client=tableau_discussion_pertes[*pdu_recu.payload.data-65]; //recuperation de l'id en ASCII et conversion via la table
+    
 
     //preparation de l'emission d'un ack
 
     pdu_emis.header.syn=0;
     pdu_emis.header.ack=1;
 
+
     IP_send(pdu_emis,addr);//envoi du pdu ack
-*/
+
+    socket_local[socket].state=ESTABLISHED;
+
     return 0;
 
 }
@@ -129,7 +152,6 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
     struct mic_tcp_pdu pdu_recu;
     struct mic_tcp_sock_addr addr_recu;
 
-    int timeout=100;
     int lost_images=0;
     
 
@@ -151,7 +173,7 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
     nb_images_sent++;
 
 
-    IP_recv(&pdu_recu, &addr_recu, timeout); //on recupere l'acquittement
+    IP_recv(&pdu_recu, &addr_recu, TIMEOUT); //on recupere l'acquittement
 
 
 
@@ -168,12 +190,12 @@ int mic_tcp_send (int mic_sock, char* mesg, int mesg_size){
     lost_rate=(float)lost_images/(float)TAILLE_FENETRE*100.0; //calcul du loss_rate
 
     while(!(pdu_recu.header.ack==1 && pdu_recu.header.ack_num==PE)){ //boucle wait et renvoi du message si pas bon numéro
-        if(lost_rate<loss_percentage_accept){
+        if(lost_rate<loss_percentage_client){
             PE--;
             return 0;
         }else{
         IP_send(pdu_emis, addr_distant);
-        IP_recv(&pdu_recu, &addr_recu, timeout);
+        IP_recv(&pdu_recu, &addr_recu,TIMEOUT);
         }
         
     }
@@ -232,7 +254,22 @@ int mic_tcp_close (int socket)
 void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
 {
     struct mic_tcp_pdu pdu_ack;
-        printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
+    printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
+
+    if((pdu.header.ack ==0)&&(pdu.header.syn==1)&&socket_local[socket_nb-1].state==IDLE){
+
+        if(tableau_discussion_pertes[*pdu.payload.data-65]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
+            id_loss_rate_returned=*pdu.payload.data-65;
+        }
+        socket_local[socket_nb-1].state = SYN_RECEIVED ;
+    }
+
+    if(pdu.header.ack == 1 && pdu.header.syn == 0 && socket_local[socket_nb-1].state == SYN_RECEIVED){
+        socket_local[socket_nb-1].state = ESTABLISHED;
+    }
+
+
+    if(pdu.header.ack == 0 && pdu.header.syn == 0){
         if(pdu.header.seq_num==PA){
             app_buffer_put(pdu.payload);
             PA=(PA+1)%2;
@@ -243,5 +280,6 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
      
 
         IP_send(pdu_ack, addr_distant);
+    }
     
 }
