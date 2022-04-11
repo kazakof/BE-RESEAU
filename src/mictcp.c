@@ -238,21 +238,11 @@ int mic_tcp_recv (int socket, char* mesg, int max_mesg_size){
  */
 int mic_tcp_close (int socket)
 {
-    //struct mic_tcp_pdu pdu_fin;
-    //memset(&pdu_fin,sizeof(struct mic_tcp_pdu),0);
 
     printf("[MIC-TCP] Appel de la fonction :  "); printf(__FUNCTION__); printf("\n");
 
-    /*pdu_fin.header.fin=1;
-
-    if(IP_send(pdu_fin, addr_distant)==-1){ //envoi du pdu de fin de connexion
-            printf("erreur IP_send\n");
-            return -1;
-    }*/
-
-    
-    //socket_local[socket].state=CLOSED;
-    return -1;
+    socket_local[socket].state=CLOSED;
+    return 0;
 }
 
 /*
@@ -270,7 +260,7 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
     if((pdu.header.ack ==0)&&(pdu.header.syn==1)&&socket_local[socket_nb-1].state==IDLE){
 
         if(tableau_discussion_pertes[pdu.header.seq_num]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
-            id_loss_rate_returned=pdu.header.seq_num;
+            id_loss_rate_returned=pdu.header.seq_num; 
         }
         socket_local[socket_nb-1].state = SYN_RECEIVED ;
         if((pcond=pthread_cond_broadcast(&cond))!=0){
@@ -282,6 +272,7 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
 
     if(pdu.header.ack == 1 && pdu.header.syn == 0 && socket_local[socket_nb-1].state == SYN_RECEIVED){
         socket_local[socket_nb-1].state = ESTABLISHED;
+        
         if((pcond=pthread_cond_broadcast(&cond))!=0){
             printf("erreur wait\n");
             exit(-1);
