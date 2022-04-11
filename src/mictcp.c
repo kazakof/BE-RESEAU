@@ -14,19 +14,20 @@ static struct mic_tcp_sock socket_local[MAX_SOCKET]; //tableau des sockets
 static int socket_nb = 0; //nombre de sockets
 static struct mic_tcp_sock_addr addr_distant;
 
-static int loss_img[TAILLE_FENETRE]={1}; //buffer circulaire pour la fenetre glissante
+static int loss_img[TAILLE_FENETRE]={1}; //buffer circulaire pour la fenetre glissante, initiliasé avec 100% de pertes pour eviter des erreurs sur le taux de pertes au depart
 static int nb_images_sent=0; //nombre d'images envoyés dans la fenetre actuelle
 
-static float tableau_discussion_pertes[1001];//tableau discussion taux de pertes
+static float tableau_discussion_pertes[1001];//tableau discussion taux de pertes de 0.0 à 100.0
 
 static int id_loss_percentage_client=102; //id du taux de pertes voulues par le client dans table de discussion
-static int id_loss_rate_returned=ID_LOSS_PERCENTAGE_SERVER;// id du pourcentage de pertes acceptables retournées par le server
+static int id_loss_rate_returned=ID_LOSS_PERCENTAGE_SERVER;// id du pourcentage de pertes acceptables, retourné par le server
 
 static float loss_percentage_client; //pourcentage de perte effectif assigné après discussion
 static float lost_rate=0.0; //effective loss_rate
 
 int PE=0;
 int PA=0;
+
 
 pthread_t tid1;
 pthread_t tid2;
@@ -71,9 +72,11 @@ int mic_tcp_socket(start_mode sm)
 int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
 {
    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+
    if(socket<socket_nb-1 || socket>=socket_nb){
        error("pb argument socket at line ",__LINE__);
    }
+
    socket_local[socket].addr=addr;
    return 0;
 }
@@ -90,7 +93,8 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
     struct mic_tcp_pdu syn_ack={0};
 
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
-
+    
+    // blocage du thread en attente du pdu syn 
     if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
         printf("erreur wait\n");
         exit(-1);
@@ -102,6 +106,8 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
     syn_ack.header.ack_num=id_loss_rate_returned;
 
     IP_send(syn_ack,*addr);	//envoi du syn_ack
+
+    //blocage du thread en attente du pdu ack
 
     if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
         printf("erreur wait\n");
@@ -263,7 +269,8 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
             id_loss_rate_returned=pdu.header.seq_num; 
         }
         socket_local[socket_nb-1].state = SYN_RECEIVED ;
-        if((pcond=pthread_cond_broadcast(&cond))!=0){
+
+        if((pcond=pthread_cond_broadcast(&cond))!=0){ //deblocage du thread main après reception du syn
             printf("erreur wait\n");
             exit(-1);
         }
@@ -273,7 +280,7 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
     if(pdu.header.ack == 1 && pdu.header.syn == 0 && socket_local[socket_nb-1].state == SYN_RECEIVED){
         socket_local[socket_nb-1].state = ESTABLISHED;
         
-        if((pcond=pthread_cond_broadcast(&cond))!=0){
+        if((pcond=pthread_cond_broadcast(&cond))!=0){ //deblocage du thread main après réception du ack
             printf("erreur wait\n");
             exit(-1);
         }
