@@ -1,12 +1,13 @@
 #include <mictcp.h>
 #include <api/mictcp_core.h>
 #include <stdio.h>
+#include <pthread.h>
 
 #define MAX_SOCKET 256
 #define TAILLE_FENETRE 60
 #define LOSS_RATE 10
 #define TIMEOUT 100
-#define ID_LOSS_PERCENTAGE_SERVER 11 //id dans la table de discussion du pourcentage de pertes acceptable par le server
+#define ID_LOSS_PERCENTAGE_SERVER 51 //id dans la table de discussion du pourcentage de pertes acceptable par le server
 
 
 static struct mic_tcp_sock socket_local[MAX_SOCKET]; //tableau des sockets 
@@ -16,8 +17,9 @@ static struct mic_tcp_sock_addr addr_distant;
 static int loss_img[TAILLE_FENETRE]={1}; //buffer circulaire pour la fenetre glissante
 static int nb_images_sent=0; //nombre d'images envoyés dans la fenetre actuelle
 
-static float tableau_discussion_pertes[21]={0.0,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0,17.0,18.0,19.0,20.0};
-static int id_loss_percentage_client=2; //id du taux de pertes voulues par le client dans table de discussion
+static float tableau_discussion_pertes[1001];//tableau discussion taux de pertes
+
+static int id_loss_percentage_client=102; //id du taux de pertes voulues par le client dans table de discussion
 static int id_loss_rate_returned=ID_LOSS_PERCENTAGE_SERVER;// id du pourcentage de pertes acceptables retournées par le server
 
 static float loss_percentage_client; //pourcentage de perte effectif assigné après discussion
@@ -25,6 +27,12 @@ static float lost_rate=0.0; //effective loss_rate
 
 int PE=0;
 int PA=0;
+
+pthread_t tid1;
+pthread_t tid2;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 
 void error(char * errorMsg, int line){ //fonction retour erreur
@@ -39,6 +47,12 @@ void error(char * errorMsg, int line){ //fonction retour erreur
 int mic_tcp_socket(start_mode sm)
 {
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
+
+    tableau_discussion_pertes[0]=0.0; //initialisation du premier element du tableau
+    for(int i=1;i<=1001;i++){ //initialisation du tableau de discussion du taux de pertes
+        tableau_discussion_pertes[i]=tableau_discussion_pertes[i-1]+0.1;
+    }
+
     if(initialize_components(sm)==-1){
         printf("erreur intialize_components\n");
         return -1;
@@ -71,27 +85,29 @@ int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
 int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
 {
     socket_local[socket].state=IDLE;
+    int pcond;
     
     struct mic_tcp_pdu syn_ack={0};
-    //struct mic_tcp_payload percentage_returned;
-    
+
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
 
-    while(socket_local[socket].state != SYN_RECEIVED){ //attente du syn
+    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+        printf("erreur wait\n");
+        exit(-1);
     }
+
 
     syn_ack.header.ack = 1 ;
     syn_ack.header.syn = 1;
-
-    /*char id_loss=id_loss_rate_returned + 65;
-    percentage_returned.size = sizeof(id_loss);
-    percentage_returned.data=&id_loss;
-    syn_ack.payload=percentage_returned;*/
+    syn_ack.header.ack_num=id_loss_rate_returned;
 
     IP_send(syn_ack,*addr);	//envoi du syn_ack
 
-    while (socket_local[socket].state != ESTABLISHED){
+    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+        printf("erreur wait\n");
+        exit(-1);
     }
+   
     return 0;
 }
 
@@ -104,15 +120,11 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
     struct mic_tcp_pdu pdu_emis={0};
     struct mic_tcp_pdu pdu_recu={0};
     struct mic_tcp_sock_addr addr_recu;
-    struct mic_tcp_payload loss_percentage;
 
     pdu_emis.header.syn=1;
     pdu_emis.header.ack=0;
+    pdu_emis.header.seq_num=id_loss_percentage_client; //on met l'id dans le tableau de discussion correspondant au taux de pertes
  
-    char id_loss=id_loss_percentage_client + 65; //conversion id en ASCII
-    loss_percentage.size = sizeof(id_loss);
-    loss_percentage.data = &id_loss;
-    pdu_emis.payload=loss_percentage;
 
 
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
@@ -123,10 +135,8 @@ int mic_tcp_connect(int socket, mic_tcp_sock_addr addr)
         IP_recv(&pdu_recu,&addr_recu,TIMEOUT);//attente de reception d'un syn_ack
       }while(!(pdu_recu.header.syn == 1 && pdu_recu.header.ack == 1));
 
-    //loss_percentage_client=tableau_discussion_pertes[*pdu_recu.payload.data-65]; //recuperation de l'id en ASCII et conversion via la table
-    
 
-    //preparation de l'emission d'un ack
+    loss_percentage_client=tableau_discussion_pertes[pdu_recu.header.ack_num]; // on definit le taux de pertes final acceptable après discussion
 
     pdu_emis.header.syn=0;
     pdu_emis.header.ack=1;
@@ -253,19 +263,30 @@ int mic_tcp_close (int socket)
  */
 void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
 {
+    int pcond;
     struct mic_tcp_pdu pdu_ack;
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
     if((pdu.header.ack ==0)&&(pdu.header.syn==1)&&socket_local[socket_nb-1].state==IDLE){
 
-        if(tableau_discussion_pertes[*pdu.payload.data-65]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
-            id_loss_rate_returned=*pdu.payload.data-65;
+        if(tableau_discussion_pertes[pdu.header.seq_num]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
+            id_loss_rate_returned=pdu.header.seq_num;
         }
         socket_local[socket_nb-1].state = SYN_RECEIVED ;
+        if((pcond=pthread_cond_broadcast(&cond))!=0){
+            printf("erreur wait\n");
+            exit(-1);
+        }
+
     }
 
     if(pdu.header.ack == 1 && pdu.header.syn == 0 && socket_local[socket_nb-1].state == SYN_RECEIVED){
         socket_local[socket_nb-1].state = ESTABLISHED;
+        if((pcond=pthread_cond_broadcast(&cond))!=0){
+            printf("erreur wait\n");
+            exit(-1);
+        }
+
     }
 
 
