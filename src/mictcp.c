@@ -29,8 +29,6 @@ int PE=0;
 int PA=0;
 
 
-pthread_t tid1;
-pthread_t tid2;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -94,10 +92,22 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
 
     printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
     
-    // blocage du thread en attente du pdu syn 
-    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
-        printf("erreur wait\n");
-        exit(-1);
+    if (pthread_mutex_lock(&mutex)) { //lock du mutex avant la zone critique
+            printf("erreur lock\n");
+            exit(-1);
+    }
+
+    while(socket_local[socket].state!=SYN_RECEIVED){
+        // blocage du thread en attente du pdu syn 
+        if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+            printf("erreur wait\n");
+            exit(-1);
+        }
+    }
+
+    if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
+            printf("erreur unlock\n");
+            exit(-1);
     }
 
 
@@ -107,13 +117,24 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
 
     IP_send(syn_ack,*addr);	//envoi du syn_ack
 
-    //blocage du thread en attente du pdu ack
-
-    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
-        printf("erreur wait\n");
-        exit(-1);
+    if (pthread_mutex_lock(&mutex)) { //lock du mutex avant la zone critique
+            printf("erreur lock\n");
+            exit(-1);
     }
-   
+
+    while(socket_local[socket].state!=ESTABLISHED){
+        // blocage du thread en attente du pdu ack 
+        if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+            printf("erreur wait\n");
+            exit(-1);
+        }
+    }
+
+    if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
+            printf("erreur unlock\n");
+            exit(-1);
+    }
+
     return 0;
 }
 
@@ -264,7 +285,7 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
     printf("[MIC-TCP] Appel de la fonction: "); printf(__FUNCTION__); printf("\n");
 
     if((pdu.header.ack ==0)&&(pdu.header.syn==1)&&socket_local[socket_nb-1].state==IDLE){
-
+        
         if(tableau_discussion_pertes[pdu.header.seq_num]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
             id_loss_rate_returned=pdu.header.seq_num; 
         }
