@@ -96,14 +96,12 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
             printf("erreur lock\n");
             exit(-1);
     }
-
-    while(socket_local[socket].state!=SYN_RECEIVED){
         // blocage du thread en attente du pdu syn 
-        if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
             printf("erreur wait\n");
             exit(-1);
-        }
     }
+    
 
     if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
             printf("erreur unlock\n");
@@ -122,12 +120,10 @@ int mic_tcp_accept(int socket, mic_tcp_sock_addr *addr)
             exit(-1);
     }
 
-    while(socket_local[socket].state!=ESTABLISHED){
         // blocage du thread en attente du pdu ack 
-        if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
-            printf("erreur wait\n");
-            exit(-1);
-        }
+    if((pcond=pthread_cond_wait(&cond,&mutex))!=0){
+        printf("erreur wait\n");
+        exit(-1);
     }
 
     if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
@@ -289,20 +285,40 @@ void process_received_PDU(mic_tcp_pdu pdu, mic_tcp_sock_addr addr)
         if(tableau_discussion_pertes[pdu.header.seq_num]<tableau_discussion_pertes[ID_LOSS_PERCENTAGE_SERVER]){ //discute le pourcentage acceptable si celui proposé est inférieur à celui acceptable par le serveur
             id_loss_rate_returned=pdu.header.seq_num; 
         }
+        if (pthread_mutex_lock(&mutex)) { //lock du mutex avant la zone critique
+            printf("erreur lock\n");
+            exit(-1);
+        }
         socket_local[socket_nb-1].state = SYN_RECEIVED ;
 
         if((pcond=pthread_cond_broadcast(&cond))!=0){ //deblocage du thread main après reception du syn
             printf("erreur wait\n");
             exit(-1);
         }
+        
+        if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
+            printf("erreur unlock\n");
+            exit(-1);
+        }
 
     }
 
     if(pdu.header.ack == 1 && pdu.header.syn == 0 && socket_local[socket_nb-1].state == SYN_RECEIVED){
+        
+        if (pthread_mutex_lock(&mutex)) { //lock du mutex avant la zone critique
+            printf("erreur lock\n");
+            exit(-1);
+        }
+        
         socket_local[socket_nb-1].state = ESTABLISHED;
         
         if((pcond=pthread_cond_broadcast(&cond))!=0){ //deblocage du thread main après réception du ack
             printf("erreur wait\n");
+            exit(-1);
+        }
+        
+        if (pthread_mutex_unlock(&mutex)) { //unlock du mutex après la zone critique
+            printf("erreur unlock\n");
             exit(-1);
         }
 
