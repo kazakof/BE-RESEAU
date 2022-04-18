@@ -72,7 +72,7 @@ int mic_tcp_bind(int socket, mic_tcp_sock_addr addr)
    printf("[MIC-TCP] Appel de la fonction: ");  printf(__FUNCTION__); printf("\n");
 
    if(socket<socket_nb-1 || socket>=socket_nb){
-       error("pb argument socket at line ",__LINE__);
+       error("pb argument socket ",__LINE__);
    }
 
    socket_local[socket].addr=addr;
